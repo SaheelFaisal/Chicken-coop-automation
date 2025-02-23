@@ -15,5 +15,8 @@ def log_event():
     cursor.execute("INSERT INTO detections (timestamp, event) VALUES (?, ?)", (timestamp, "Motion Detected"))
     conn.commit()
 
+for i in range(3):
+    log_event()
+    time.sleep(1)
 conn.close()
 
