@@ -1,7 +1,11 @@
 import data_logger
 import time
 
-for i in range(3):
+data_logger.init_db()
+
+for i in range(2):
     data_logger.log_event();
-    conn.close();
+    print(f"Logged event {i + 1}/2")
     time.sleep(1)
+
+print("Finished logging events")
