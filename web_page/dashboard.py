@@ -4,23 +4,8 @@ import pandas as pd
 import time
 import matplotlib.pyplot as plt
 
-# Set page configuration
-st.set_page_config(page_title="Predator Detection Dashboard", layout="wide")
-
-# Apply Custom Styling
-st.markdown("""
-    <style>
-        .title { 
-            color: #FFFFFF; 
-            font-size: 40px !important;  /* Increased font size */
-            font-weight: bold; 
-            text-align: center;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
 # Title
-st.markdown('<p class="title">🐔 Chicken Predator Detection Dashboard</p>', unsafe_allow_html=True)
+st.header("Chicken Predator Detection Dashboard", divider="grey")
 
 # Connect to SQLite and fetch detection data
 def fetch_data():
