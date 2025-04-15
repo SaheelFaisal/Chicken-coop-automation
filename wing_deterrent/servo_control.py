@@ -1,35 +1,30 @@
 import pigpio
 import time
 
-SERVO_PIN = 18  # GPIO18 (physical pin 12)
+SERVO_PIN1 = 24  # GPIO24
+SERVO_PIN1 = 25  # GPIO24
 
 # Initialize pigpio and set mode
 pi = pigpio.pi()
-pi.set_mode(SERVO_PIN, pigpio.OUTPUT)
+pi.set_mode(SERVO_PIN1, pigpio.OUTPUT)
+pi.set_mode(SERVO_PIN2, pigpio.OUTPUT)
+
 
 # Function to set servo angle
 def set_angle(angle):
     pulse_width = 500 + int((angle / 180.0) * 2000)
-    pi.set_servo_pulsewidth(SERVO_PIN, pulse_width)
+    pi.set_servo_pulsewidth(SERVO_PIN1, pulse_width)
+    pi.set_servo_pulsewidth(SERVO_PIN2, pulse_width)
 
 try:
-    print("Moving servo to 0°")
-    set_angle(0)
-    time.sleep(1)
-
-    print("Moving to 90°")
-    set_angle(90)
-    time.sleep(1)
-
-    print("Moving to 180°")
-    set_angle(180)
-    time.sleep(1)
-
-    print("Back to 90°")
-    set_angle(90)
-    time.sleep(1)
+    while True:
+        for t in range(0, 360, 2):  # smaller step = smoother motion
+            angle = 75 + 45 * math.sin(math.radians(t))  # 75 ± 45
+            set_angle(angle)
+            time.sleep(0.01)  # 10ms pause, smoother movement
 
 finally:
-    print("Releasing servo")
-    pi.set_servo_pulsewidth(SERVO_PIN, 0)
+    print("Releasing servos")
+    pi.set_servo_pulsewidth(SERVO_PIN1, 0)
+    pi.set_servo_pulsewidth(SERVO_PIN2, 0)
     pi.stop()

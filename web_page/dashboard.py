@@ -8,9 +8,15 @@ import matplotlib.pyplot as plt
 st.header("Chicken Predator Detection Dashboard", divider="grey")
 
 # Connect to SQLite and fetch detection data
-def fetch_data():
+def fetch_detection_data():
     conn = sqlite3.connect("../predator_data.db")
     df = pd.read_sql_query("SELECT * FROM detections", conn)
+    conn.close()
+    return df
+
+def fetch_chicken_count_data():
+    conn = sqlite3.connect("../predator_data.db")
+    df = pd.read_sql_query("SELECT * FROM chicken_count", conn)
     conn.close()
     return df
 
@@ -24,7 +30,7 @@ col1, col2 = st.columns(2)
 # Show Detection Logs
 with col1:
     st.subheader("📋 Detection Logs")
-    df = fetch_data()
+    df = fetch_detection_data()
     
     if not df.empty:
         df["timestamp"] = pd.to_datetime(df["timestamp"])
@@ -52,3 +58,20 @@ with col2:
     else:
         st.write("No data available for trend analysis.")
 
+# Section for Chicken Count Data
+st.subheader("🐔 Chicken Count Over Time")
+chicken_df = fetch_chicken_count_data()
+
+if not chicken_df.empty:
+    chicken_df["Time"] = pd.to_datetime(chicken_df["Time"])
+    st.write(chicken_df)
+
+    # Plot Chicken Count Over Time
+    fig2, ax2 = plt.subplots()
+    ax2.plot(chicken_df["Time"], chicken_df["Count"], marker='o', linestyle='-', color="#FFA500")
+    ax2.set_xlabel("Time")
+    ax2.set_ylabel("Chicken Count")
+    ax2.set_title("Chicken Count Over Time")
+    st.pyplot(fig2)
+else:
+    st.write("No chicken count data available.")
