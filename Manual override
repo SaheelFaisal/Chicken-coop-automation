@@ -1,0 +1,224 @@
+import RPi.GPIO as GPIO
+import time
+from actuator import actuator
+from stepper import stepper
+from event_logger import log_event
+from motion_handler import flash_light, motion_handler, play_random_sound
+import pigpio
+
+# --- Additional for spray ---
+SERVO_PIN = 17
+pi = pigpio.pi()
+if not pi.connected:
+    raise Exception("Could not connect to pigpio daemon")
+
+def spray_water(times=5):
+    for _ in range(times):
+        pi.set_servo_pulsewidth(SERVO_PIN, 2000)  # Spray
+        time.sleep(0.5)
+        pi.set_servo_pulsewidth(SERVO_PIN, 1000)  # Reset
+        time.sleep(0.5)
+    pi.set_servo_pulsewidth(SERVO_PIN, 0)
+
+def cleanup_sprayer():
+    pi.stop()
+
+# --- Variables ---
+IR_SENSOR_PIN = 20
+LIMIT_SWITCH_PIN = 21
+
+combo_count = 0
+fake_daytime = True
+limit_count = 0
+ir_count = 0
+
+# --- Helper functions ---
+
+def fake_check_sun_times():
+    return "open" if fake_daytime else "close"
+
+def test_limit_switch(timeout=5):
+    global limit_count
+    print(f"[TEST] Waiting for limit switch press (Timeout {timeout} seconds)...")
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        if GPIO.input(LIMIT_SWITCH_PIN) == GPIO.LOW:
+            limit_count += 1
+            print(f"[LIMIT] Switch pressed. Total: {limit_count}")
+            log_event("Manual Limit Switch Triggered", f"Count: {limit_count}")
+            time.sleep(0.5)
+            return
+        time.sleep(0.05)
+    print("[LIMIT] No press detected during test period.")
+
+def test_ir_sensor(timeout=5):
+    global ir_count
+    print(f"[TEST] Waiting for IR beam break (Timeout {timeout} seconds)...")
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        if GPIO.input(IR_SENSOR_PIN) == GPIO.LOW:
+            ir_count += 1
+            print(f"[IR] Beam broken. Total: {ir_count}")
+            log_event("Manual IR Triggered", f"Count: {ir_count}")
+            time.sleep(0.5)
+            return
+        time.sleep(0.05)
+    print("[IR] No beam break detected during test period.")
+
+def test_combo_counter(timeout=10, manual_test=False):
+    global combo_count
+    print(f"[COMBO TEST] Simulated time: {'DAY' if fake_daytime else 'NIGHT'}")
+
+    if not manual_test:
+        if fake_check_sun_times() != "open":
+            print("[COMBO] Skipping test: Only active during daytime simulation.")
+            return
+
+    print("[COMBO] Waiting for both IR and Limit Switch to trigger...")
+
+    ir_triggered = False
+    limit_triggered = False
+    start_time = time.time()
+
+    while time.time() - start_time < timeout:
+        if GPIO.input(IR_SENSOR_PIN) == GPIO.LOW and not ir_triggered:
+            ir_triggered = True
+            print("[COMBO] IR triggered.")
+
+        if GPIO.input(LIMIT_SWITCH_PIN) == GPIO.LOW and not limit_triggered:
+            limit_triggered = True
+            print("[COMBO] Limit Switch triggered.")
+
+        if ir_triggered and limit_triggered:
+            combo_count += 1
+            print(f"[COMBO] Valid chicken detected. Total: {combo_count}")
+            log_event("Manual Combo Count", f"Combo Count: {combo_count}")
+            time.sleep(0.5)
+            return
+        
+        time.sleep(0.05)
+
+    print("[COMBO] Combo failed (timeout or only one sensor triggered).")
+    log_event("Manual Combo Count Failed", "False trigger or timeout.")
+
+# --- Manual Menu ---
+
+def manual_menu():
+    global fake_daytime
+    global combo_count
+
+    while True:
+        print("\n----- MANUAL OVERRIDE MENU -----")
+        print(f"Simulated Time: {'DAYTIME' if fake_daytime else 'NIGHTTIME'}")
+        print("1. Extend Actuator (Close Coop)")
+        print("2. Retract Actuator (Open Coop)")
+        print("3. Stop Actuator")
+        print("4. Stepper CW for 5 sec")
+        print("5. Stepper CCW for 5 sec")
+        print("6. Flash Light")
+        print("7. Play Random Sound")
+        print("8. Test Limit Switch Counter")
+        print("9. Test IR Break Beam Counter")
+        print("10. Test COMBO Counter (IR + Limit)")
+        print("11. Simulate Daytime (open coop + combo test)")
+        print("12. Simulate Nighttime (close coop + deterrent test)")
+        print("0. Exit Manual Mode")
+        choice = input("Select an option: ")
+
+        if choice == "1":
+            actuator.extend()
+            print("[ACTUATOR] Extending for 5 seconds...")
+            time.sleep(5)
+            actuator.stop()
+            log_event("Manual Extend", "Actuator Extended and Stopped")
+
+        elif choice == "2":
+            actuator.retract()
+            print("[ACTUATOR] Retracting for 5 seconds...")
+            time.sleep(5)
+            actuator.stop()
+            log_event("Manual Retract", "Actuator Retracted and Stopped")
+
+        elif choice == "3":
+            actuator.stop()
+            print("[ACTUATOR] Stopped.")
+            log_event("Manual Stop", "Actuator Stopped")
+
+        elif choice == "4":
+            stepper.power_on()
+            print("[STEPPER] Rotating CW for 5 seconds...")
+            stepper.rotate("cw", 5)
+            stepper.power_off()
+            log_event("Manual Stepper", "CW")
+
+        elif choice == "5":
+            stepper.power_on()
+            print("[STEPPER] Rotating CCW for 5 seconds...")
+            stepper.rotate("ccw", 5)
+            stepper.power_off()
+            log_event("Manual Stepper", "CCW")
+
+        elif choice == "6":
+            flash_light()
+            log_event("Manual Light Flash", "Light Flashed")
+
+        elif choice == "7":
+            play_random_sound()
+            time.sleep(1)
+            log_event("Manual Sound", "Random Sound Played")
+
+        elif choice == "8":
+            test_limit_switch(timeout=10)
+
+        elif choice == "9":
+            test_ir_sensor(timeout=10)
+
+        elif choice == "10":
+            test_combo_counter(timeout=10, manual_test=True)
+
+        elif choice == "11":
+            fake_daytime = True
+            print("[SIMULATION] Set to DAYTIME mode.")
+            actuator.retract()
+            time.sleep(15)
+            actuator.stop()
+            stepper.power_on()
+            stepper.rotate("cw", 5)
+            stepper.power_off()
+            log_event("Simulated Coop Opened", "Manual Day Mode")
+            test_combo_counter(timeout=10)
+
+        elif choice == "12":
+            fake_daytime = False
+            print("[SIMULATION] Set to NIGHTTIME mode.")
+            actuator.extend()
+            time.sleep(15)
+            actuator.stop()
+            stepper.power_on()
+            stepper.rotate("ccw", 5)
+            stepper.power_off()
+            log_event("Simulated Coop Closed", "Manual Night Mode")
+
+            print(f"[SUMMARY] Total chickens counted today: {combo_count}")
+            log_event("Daily Count Summary", f"Total: {combo_count}")
+            combo_count = 0
+
+            print("[SIM] Starting Motion Detection Demo with Sprayer. Press Ctrl+C to stop.")
+            try:
+                while True:
+                    if GPIO.input(IR_SENSOR_PIN) == GPIO.LOW:
+                        print("[MOTION] Motion detected!")
+                        flash_light()
+                        play_random_sound()
+                        spray_water(times=5)
+                        time.sleep(3)  # cooldown
+                    time.sleep(0.1)
+            except KeyboardInterrupt:
+                print("[SIM] Motion demo stopped.")
+
+        elif choice == "0":
+            print("Exiting manual override.")
+            break
+
+        else:
+            print("Invalid option. Try again.")
