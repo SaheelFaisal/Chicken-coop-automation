@@ -2,7 +2,7 @@ import time
 import RPi.GPIO as GPIO
 from relay_polarity_control import PolarityRelayController
 from relay_stepper_control import RelayStepperController
-from motion_light_sound import flash_light, play_random_sound, motion_handler
+from motion_sound_system import flash_light, play_random_sound, motion_handler
 from event_logger import log_event
 
 # GPIO setup
@@ -28,7 +28,7 @@ fake_daytime = True
 def fake_check_sun_times():
     return "open" if fake_daytime else "close"
 
-def test_limit_switch(timeout=10):
+def test_limit_switch(timeout=5):
     global limit_count
     print(f"[TEST] Waiting for limit switch press (Timeout {timeout} seconds)...")
     start_time = time.time()
@@ -37,12 +37,12 @@ def test_limit_switch(timeout=10):
             limit_count += 1
             print(f"[LIMIT] Switch pressed. Total: {limit_count}")
             log_event("Manual Limit Switch Triggered", f"Count: {limit_count}")
-            time.sleep(1)
+            time.sleep(0.5)
             return
-        time.sleep(0.1)
+        time.sleep(0.05)
     print("[LIMIT] No press detected during test period.")
 
-def test_ir_sensor(timeout=10):
+def test_ir_sensor(timeout=0.5):
     global ir_count
     print(f"[TEST] Waiting for IR beam break (Timeout {timeout} seconds)...")
     start_time = time.time()
@@ -51,12 +51,12 @@ def test_ir_sensor(timeout=10):
             ir_count += 1
             print(f"[IR] Beam broken. Total: {ir_count}")
             log_event("Manual IR Triggered", f"Count: {ir_count}")
-            time.sleep(1)
+            time.sleep(5)
             return
-        time.sleep(0.1)
+        time.sleep(0.5)
     print("[IR] No beam break detected during test period.")
 
-def test_combo_counter(timeout=5):
+def test_combo_counter(timeout=2):
     global combo_count
     print(f"[COMBO TEST] Simulated time: {'DAY' if fake_daytime else 'NIGHT'}")
 
@@ -93,7 +93,7 @@ def test_combo_counter(timeout=5):
                 combo_count += 1
                 print(f"[COMBO] Valid chicken detected. Total: {combo_count}")
                 log_event("Manual Combo Count", f"Combo Count: {combo_count}")
-                time.sleep(1)
+                time.sleep(0.5)
                 return
 
         print("[COMBO] Combo failed (timeout or only one sensor triggered).")
@@ -126,14 +126,14 @@ def manual_menu():
         if choice == "1":
             actuator.extend()
             print("[ACTUATOR] Extending for 5 seconds...")
-            time.sleep(5)
+            time.sleep(15)
             actuator.stop()
             log_event("Manual Extend", "Actuator Extended and Stopped")
 
         elif choice == "2":
             actuator.retract()
             print("[ACTUATOR] Retracting for 5 seconds...")
-            time.sleep(5)
+            time.sleep(15)
             actuator.stop()
             log_event("Manual Retract", "Actuator Retracted and Stopped")
 
@@ -172,14 +172,14 @@ def manual_menu():
             test_ir_sensor(timeout=10)
 
         elif choice == "10":
-            test_combo_counter(timeout=5)
+            test_combo_counter(timeout=10)
 
         elif choice == "11":
             fake_daytime = True
             print("[SIMULATION] Set to DAYTIME mode.")
             print("[SIM] Opening Coop (Actuator retract, Stepper CW)...")
             actuator.retract()
-            time.sleep(5)
+            time.sleep(15)
             actuator.stop()
             stepper.power_on()
             stepper.rotate("cw", 5)
@@ -187,14 +187,14 @@ def manual_menu():
             log_event("Simulated Coop Opened", "Manual Day Mode")
 
             print("[SIM] Starting Combo Counter Test...")
-            test_combo_counter(timeout=5)
+            test_combo_counter(timeout=10)
 
         elif choice == "12":
             fake_daytime = False
             print("[SIMULATION] Set to NIGHTTIME mode.")
             print("[SIM] Closing Coop (Actuator extend, Stepper CCW)...")
             actuator.extend()
-            time.sleep(5)
+            time.sleep(15)
             actuator.stop()
             stepper.power_on()
             stepper.rotate("ccw", 5)
