@@ -4,206 +4,200 @@ import RPi.GPIO as GPIO
 from relay_polarity_control import PolarityRelayController
 from relay_stepper_control import RelayStepperController
 from sunset_sunrise_control import SunriseSunsetController
-from motion_sound_system import flash_light, play_random_sound, motion_handler
-from sprayer import spray_water
+from motion_sound_system import flash_light, play_random_sound, motion_handler as full_motion_handler
 from event_logger import log_event
 
 # Setup GPIO
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
 
-# Switches
-MODE_SWITCH_PIN = 13  # Auto/Manual Switch
-DAY_NIGHT_SWITCH_PIN = 4  # Day/Night when in Manual
-
-# Sensors
-LIMIT_SWITCH_PIN = 23
-IR_SENSOR_PIN = 22
-
-# Setup Inputs
-GPIO.setup(MODE_SWITCH_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-GPIO.setup(DAY_NIGHT_SWITCH_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-GPIO.setup(LIMIT_SWITCH_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-GPIO.setup(IR_SENSOR_PIN, GPIO.IN)
-
-# Components
+# Relay Components
 actuator = PolarityRelayController()
 stepper = RelayStepperController()
 sun = SunriseSunsetController()
 
-# State variables
-auto_mode = True
-daytime_manual = True
-coop_closed = True
+# IR and Limit Switch Setup
+LIMIT_SWITCH_PIN = 23
+IR_SENSOR_PIN = 22
+GPIO.setup(LIMIT_SWITCH_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+GPIO.setup(IR_SENSOR_PIN, GPIO.IN)
+
+# Manual Override Buttons
+MODE_SWITCH_PIN = 13   # Switch between AUTO <-> MANUAL
+DAY_NIGHT_SWITCH_PIN = 4  # Switch between DAY <-> NIGHT (in manual)
+
+GPIO.setup(MODE_SWITCH_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+GPIO.setup(DAY_NIGHT_SWITCH_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+# System States
 combo_count = 0
+coop_closed = True
+manual_mode = False
+manual_daytime = True
 motion_thread = None
-motion_active = False
+motion_thread_running = False
 
-def open_coop():
+def extend_coop():
     global coop_closed
-    if not coop_closed:
-        print("[COOP] Already open.")
-        return
-    print("[COOP] Opening coop...")
-    actuator.retract()
-    time.sleep(15)
-    actuator.stop()
-    stepper.power_on()
-    stepper.rotate("cw", 5.25)
-    stepper.power_off()
-    coop_closed = False
-    log_event("Coop Opened", "Daytime")
-
-def close_coop():
-    global coop_closed
-    if coop_closed:
-        print("[COOP] Already closed.")
-        return
-    print("[COOP] Closing coop...")
     actuator.extend()
     time.sleep(15)
     actuator.stop()
     stepper.power_on()
-    stepper.rotate("ccw", 5.25)
+    stepper.rotate("ccw", 5)
     stepper.power_off()
     coop_closed = True
     log_event("Coop Closed", "Nighttime")
+    print("[COOP] Coop closed.")
 
-def combo_counter_monitor():
+def retract_coop():
+    global coop_closed
+    actuator.retract()
+    time.sleep(15)
+    actuator.stop()
+    stepper.power_on()
+    stepper.rotate("cw", 5)
+    stepper.power_off()
+    coop_closed = False
+    log_event("Coop Opened", "Daytime")
+    print("[COOP] Coop opened.")
+
+def combo_counter_loop():
     global combo_count
-    print("[COMBO] Combo Counter Active (IR + Limit Switch)...")
+    print("[COMBO] Combo counter active (DAY).")
     while True:
+        if not is_daytime():
+            break  # Stop combo counter if no longer day
+
         ir_triggered = False
         limit_triggered = False
         start_time = None
 
+        # Wait for either IR or Limit Switch first
         if GPIO.input(IR_SENSOR_PIN) == GPIO.LOW:
             ir_triggered = True
             start_time = time.time()
-            print("[COMBO] IR triggered, waiting for Limit Switch...")
+            print("[COMBO] IR triggered first.")
         elif GPIO.input(LIMIT_SWITCH_PIN) == GPIO.LOW:
             limit_triggered = True
             start_time = time.time()
-            print("[COMBO] Limit Switch triggered, waiting for IR...")
+            print("[COMBO] Limit Switch triggered first.")
 
         if start_time:
-            while time.time() - start_time < 2:
+            while time.time() - start_time < 2:  # 2 seconds window
                 if not limit_triggered and GPIO.input(LIMIT_SWITCH_PIN) == GPIO.LOW:
                     limit_triggered = True
-                    print("[COMBO] Limit Switch triggered!")
-
+                    print("[COMBO] Limit triggered after IR.")
                 if not ir_triggered and GPIO.input(IR_SENSOR_PIN) == GPIO.LOW:
                     ir_triggered = True
-                    print("[COMBO] IR triggered!")
+                    print("[COMBO] IR triggered after Limit.")
 
                 if ir_triggered and limit_triggered:
                     combo_count += 1
-                    print(f"[COMBO] Valid chicken detected! Total: {combo_count}")
-                    log_event("Combo Chicken Count", f"Combo Count: {combo_count}")
+                    print(f"[COMBO] Chicken counted! Total: {combo_count}")
+                    log_event("Chicken Count", f"Total: {combo_count}")
                     time.sleep(2)
                     break
-
                 time.sleep(0.05)
-
-            if not (ir_triggered and limit_triggered):
-                print("[COMBO] False count detected.")
-                log_event("Combo Count Failed", "False trigger or timeout")
 
         time.sleep(0.1)
 
-def start_motion_monitor():
-    global motion_thread, motion_active
-    if motion_active:
-        print("[MOTION] Motion monitoring already active.")
-        return
-    print("[MOTION] Starting motion monitoring...")
-    motion_active = True
-    motion_thread = threading.Thread(target=motion_handler)
-    motion_thread.daemon = True
-    motion_thread.start()
+def motion_handler_loop():
+    print("[MOTION] Motion handler active (NIGHT).")
+    try:
+        full_motion_handler()
+    except Exception as e:
+        print(f"[MOTION] Error: {e}")
 
-def stop_motion_monitor():
-    global motion_active
-    if motion_active:
-        print("[MOTION] Stopping motion monitoring...")
-        motion_active = False
-        GPIO.cleanup()
-        time.sleep(1)
-
-def check_mode_switch():
-    return GPIO.input(MODE_SWITCH_PIN) == GPIO.LOW
-
-def check_day_night_switch():
-    return GPIO.input(DAY_NIGHT_SWITCH_PIN) == GPIO.LOW
-
-def auto_day_night_monitor():
-    print("[AUTO] Auto Day/Night monitoring active...")
-    global coop_closed
-
-    while auto_mode:
-        if sun.needs_update():
-            sun.fetch_sun_times()
-
+def is_daytime():
+    if manual_mode:
+        return manual_daytime
+    else:
         state = sun.check_sun_times()
-        if state == "open":
-            open_coop()
-            combo_counter_monitor()
-        elif state == "close":
-            close_coop()
-            start_motion_monitor()
-        time.sleep(30)
+        return state == "open"
 
-def manual_day_night_monitor():
-    print("[MANUAL] Manual Day/Night monitoring active...")
-    global daytime_manual
+def switch_to_manual():
+    global manual_mode
+    manual_mode = True
+    print("[MODE] Switched to MANUAL MODE.")
 
-    while not auto_mode:
-        if check_day_night_switch():
-            if not daytime_manual:
-                daytime_manual = True
-                print("[MANUAL] Switched to DAYTIME manually.")
-                open_coop()
-        else:
-            if daytime_manual:
-                daytime_manual = False
-                print("[MANUAL] Switched to NIGHTTIME manually.")
-                close_coop()
+def switch_to_auto():
+    global manual_mode
+    manual_mode = False
+    print("[MODE] Switched to AUTO MODE.")
 
-        if daytime_manual:
-            combo_counter_monitor()
-        else:
-            start_motion_monitor()
+def switch_day_night_manual():
+    global manual_daytime
+    manual_daytime = not manual_daytime
+    print(f"[TIME] Switched to {'DAYTIME' if manual_daytime else 'NIGHTTIME'}.")
 
-        time.sleep(1)
-
-def main_loop():
-    global auto_mode, daytime_manual
-
-    print("[SYSTEM] Starting main system...")
-    open_coop()
+def monitor_mode_switch():
+    prev_mode_state = GPIO.input(MODE_SWITCH_PIN)
+    prev_daynight_state = GPIO.input(DAY_NIGHT_SWITCH_PIN)
 
     while True:
-        current_mode = check_mode_switch()
+        time.sleep(0.1)
 
-        if current_mode and not auto_mode:
-            print("[SYSTEM] Switching to AUTO MODE")
-            auto_mode = True
-            stop_motion_monitor()
-            open_coop()
-            threading.Thread(target=auto_day_night_monitor).start()
+        mode_state = GPIO.input(MODE_SWITCH_PIN)
+        if mode_state != prev_mode_state and mode_state == GPIO.LOW:
+            if manual_mode:
+                switch_to_auto()
+            else:
+                switch_to_manual()
+        prev_mode_state = mode_state
 
-        elif not current_mode and auto_mode:
-            print("[SYSTEM] Switching to MANUAL MODE")
-            auto_mode = False
-            stop_motion_monitor()
-            open_coop()
-            threading.Thread(target=manual_day_night_monitor).start()
+        if manual_mode:
+            daynight_state = GPIO.input(DAY_NIGHT_SWITCH_PIN)
+            if daynight_state != prev_daynight_state and daynight_state == GPIO.LOW:
+                switch_day_night_manual()
+            prev_daynight_state = daynight_state
 
+def run_daytime():
+    global motion_thread_running, motion_thread
+
+    if coop_closed:
+        retract_coop()
+
+    if motion_thread_running:
+        motion_thread_running = False
         time.sleep(1)
+
+    combo_counter_loop()
+
+def run_nighttime():
+    global motion_thread_running, motion_thread
+
+    if not coop_closed:
+        extend_coop()
+
+    if not motion_thread_running:
+        motion_thread_running = True
+        motion_thread = threading.Thread(target=motion_handler_loop)
+        motion_thread.start()
+
+    while is_daytime() == False:
+        time.sleep(1)
+
+    motion_thread_running = False
+
+def main_loop():
+    threading.Thread(target=monitor_mode_switch, daemon=True).start()
+
+    while True:
+        try:
+            if is_daytime():
+                print("[SYSTEM] It's DAYTIME.")
+                run_daytime()
+            else:
+                print("[SYSTEM] It's NIGHTTIME.")
+                run_nighttime()
+        except Exception as e:
+            print(f"[ERROR] Main Loop Error: {e}")
+            GPIO.cleanup()
+            break
 
 if __name__ == "__main__":
     try:
         main_loop()
     except KeyboardInterrupt:
-        print("[EXIT] Shutting down system...")
+        print("[SYSTEM] Shutting down...")
         GPIO.cleanup()
